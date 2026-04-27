@@ -12,7 +12,7 @@
 安装全功能 sing-box：
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/chaooooooo/singbox-sh/main/install-singbox-yyds.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/chaooooooo/singbox-sh/main/install-singbox-sh.sh)"
 ```
 
 ## 主要特性
@@ -32,5 +32,4 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/chaooooooo/singbox-sh/ma
 
 - **一键生成** - 从落地机直接生成线路机安装脚本
 - **一键出站** - 可直接添加落地机链接来添加出站
-- **多路入站** - 可生成多个入站来配合出站
 - **流量转发** - 自动转发流量到落地机节点
