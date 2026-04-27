@@ -2,21 +2,20 @@
 
 一个 Sing-box 自动化部署工具，支持多协议自选部署和线路机中转的完整解决方案。
 
-#本项目基于 [caigouzi121380/singbox-deploy](https://github.com/caigouzi121380/singbox-deploy) 修改而来。
+本项目基于 [caigouzi121380/singbox-deploy](https://github.com/caigouzi121380/singbox-deploy) 修改而来。
 
-#原项目地址：https://github.com/caigouzi121380/singbox-deploy
+原项目地址：https://github.com/caigouzi121380/singbox-deploy
 
 ---
-
 ## 一键部署命令
 
 安装全功能 sing-box：
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/caigouzi121380/singbox-deploy/main/install-singbox-yyds.sh)"
-```markdown id="igj2vk"
+```
 
-## 一键部署命令
+## 主要特性
 
 - **多系统支持** - 支持 Alpine, Debian, Ubuntu, CentOS, RHEL, Fedora 等操作系统
 - **管理工具** - 输入 sb 指令进入管理界面查看节点链接、重置端口、服务端控制查看等功能
