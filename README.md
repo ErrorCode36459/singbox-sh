@@ -1,18 +1,19 @@
 # Sing-box 多协议一键部署脚本
 
-#本项目基于 [caigouzi121380/singbox-deploy](https://github.com/caigouzi121380/singbox-deploy) 修改而来。
-#原项目地址：https://github.com/caigouzi121380/singbox-deploy
-
 一个 Sing-box 自动化部署工具，支持多协议自选部署和线路机中转的完整解决方案。
+
+#本项目基于 [caigouzi121380/singbox-deploy](https://github.com/caigouzi121380/singbox-deploy) 修改而来。
+
+#原项目地址：https://github.com/caigouzi121380/singbox-deploy
 
 ---
 
-## ✅ 一键部署命令
+## 一键部署命令
 
 安装全功能 sing-box：
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/caigouzi121380/singbox-deploy/main/install-singbox-yyds.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/caigouzi121380/singbox-deploy/main/install-singbox-yyds.sh)"```
 
 ## 主要特性
 
