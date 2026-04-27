@@ -790,9 +790,6 @@ configure_relay_outbound() {
         return 0
     fi
 
-    echo ""
-    echo "请输入落地机 SS 链接："
-    echo ""
     read -p "请输入落地机链接: " LANDING_LINK
 
     if [[ ! "$LANDING_LINK" =~ ^ss:// ]]; then
