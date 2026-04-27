@@ -1372,6 +1372,10 @@ action_modify_outbound() {
     fi
 
     echo ""
+        read -p "是否保留原来的直连节点？(Y/n): " KEEP_DIRECT
+        KEEP_DIRECT="${KEEP_DIRECT:-Y}"
+
+    echo ""
     read -p "请输入落地机 SS 链接: " LANDING_LINK
 
     if [[ ! "$LANDING_LINK" =~ ^ss:// ]]; then
@@ -1416,47 +1420,104 @@ action_modify_outbound() {
 
     cp "$CONFIG_PATH" "${CONFIG_PATH}.bak.$(date +%s)"
 
+    cp "$CONFIG_PATH" "${CONFIG_PATH}.bak.$(date +%s)"
+
+if [[ "$KEEP_DIRECT" =~ ^[Yy]$ ]]; then
+    info "保留原来的直连节点，准备新增一个线路机入站"
+
+    RELAY_PORT=$(rand_port)
+    RELAY_UUID=$(rand_uuid)
+
     jq \
-    --arg server "$LANDING_SERVER" \
-    --argjson port "$LANDING_PORT" \
-    --arg method "$LANDING_METHOD" \
-    --arg password "$LANDING_PASSWORD" '
-    . as $root
-    | ($root.inbounds | map(.tag)) as $in_tags
-    | .outbounds = (
-      [.outbounds[] | select(.tag != "landing-out")]
-        + [
-            {
-                "type": "shadowsocks",
-                 "tag": "landing-out",
-                "server": $server,
-                "server_port": $port,
-                "method": $method,
-                "password": $password
-            }
-            ]
-    )
-  | .route = {
-      "rules": [
-        {
-          "inbound": $in_tags,
-          "outbound": "landing-out"
-        }
-      ],
-      "final": "landing-out"
-    }
-  ' "$CONFIG_PATH" > "${CONFIG_PATH}.tmp" && mv "${CONFIG_PATH}.tmp" "$CONFIG_PATH"
+      --arg server "$LANDING_SERVER" \
+      --argjson port "$LANDING_PORT" \
+      --arg method "$LANDING_METHOD" \
+      --arg password "$LANDING_PASSWORD" \
+      --arg relay_uuid "$RELAY_UUID" \
+      --argjson relay_port "$RELAY_PORT" '
+      .outbounds = (
+          [.outbounds[] | select(.tag != "landing-out")]
+          + [{
+              "type": "shadowsocks",
+              "tag": "landing-out",
+              "server": $server,
+              "server_port": $port,
+              "method": $method,
+              "password": $password
+          }]
+      )
+      | .inbounds = (
+          [.inbounds[] | select(.tag != "relay-in")]
+          + [{
+              "type": "vless",
+              "tag": "relay-in",
+              "listen": "::",
+              "listen_port": $relay_port,
+              "users": [{
+                  "uuid": $relay_uuid
+              }]
+          }]
+      )
+      | .route = (.route // {"rules":[]})
+      | .route.rules = (
+          [.route.rules[]? | select(.inbound != "relay-in")]
+          + [{
+              "inbound": "relay-in",
+              "outbound": "landing-out"
+          }]
+      )
+      ' "$CONFIG_PATH" > "${CONFIG_PATH}.tmp" && mv "${CONFIG_PATH}.tmp" "$CONFIG_PATH"
 
-    if sing-box check -c "$CONFIG_PATH" >/dev/null 2>&1; then
-        info "出站配置校验通过"
+    info "新增线路机入站端口: $RELAY_PORT"
+    info "新增线路机 UUID: $RELAY_UUID"
 
-        service_restart || warn "重启服务失败"
+else
+    info "不保留原来的直连节点，所有现有入站将转发到 landing-out"
 
-        info "出站配置完成：所有入站流量将转发到 landing-out"
+    jq \
+      --arg server "$LANDING_SERVER" \
+      --argjson port "$LANDING_PORT" \
+      --arg method "$LANDING_METHOD" \
+      --arg password "$LANDING_PASSWORD" '
+      . as $root
+      | ($root.inbounds | map(.tag)) as $in_tags
+      | .outbounds = (
+          [.outbounds[] | select(.tag != "landing-out")]
+          + [{
+              "type": "shadowsocks",
+              "tag": "landing-out",
+              "server": $server,
+              "server_port": $port,
+              "method": $method,
+              "password": $password
+          }]
+      )
+      | .route = {
+          "rules": [{
+              "inbound": $in_tags,
+              "outbound": "landing-out"
+          }],
+          "final": "landing-out"
+      }
+      ' "$CONFIG_PATH" > "${CONFIG_PATH}.tmp" && mv "${CONFIG_PATH}.tmp" "$CONFIG_PATH"
+fi
+
+if sing-box check -c "$CONFIG_PATH" >/dev/null 2>&1; then
+    info "出站配置校验通过"
+
+    service_restart || warn "重启服务失败"
+
+    if [[ "$KEEP_DIRECT" =~ ^[Yy]$ ]]; then
+        info "已保留原有直连节点"
+        info "新增线路机入站 relay-in 将转发到 landing-out"
     else
-        err "配置校验失败，请检查 $CONFIG_PATH"
-        return 1
+        info "未保留原有直连节点"
+        info "所有现有入站流量将转发到 landing-out"
     fi
+else
+    err "配置校验失败，请检查 $CONFIG_PATH"
+    return 1
+fi
 }
 
 # 生成线路机脚本
