@@ -1183,6 +1183,12 @@ action_view_uri() {
     generate_uris || { err "生成 URI 失败"; return 1; }
     echo ""
     cat /etc/sing-box/uris.txt
+
+    if [ -f /etc/sing-box/relay_uri.txt ]; then
+        echo ""
+        echo "=== 新增线路机 Reality ==="
+        cat /etc/sing-box/relay_uri.txt
+    fi
 }
 
 # 查看配置文件路径
@@ -1422,16 +1428,19 @@ action_modify_outbound() {
 if [[ "$KEEP_DIRECT" =~ ^[Yy]$ ]]; then
     info "保留原来的直连节点，准备新增一个线路机入站"
 
-    RELAY_PORT=$(rand_port)
-    RELAY_UUID=$(rand_uuid)
+    create_relay_inbound || return 1
 
     jq \
       --arg server "$LANDING_SERVER" \
       --argjson port "$LANDING_PORT" \
       --arg method "$LANDING_METHOD" \
       --arg password "$LANDING_PASSWORD" \
+      --arg relay_tag "$RELAY_TAG" \
+      --argjson relay_port "$RELAY_PORT" \
       --arg relay_uuid "$RELAY_UUID" \
-      --argjson relay_port "$RELAY_PORT" '
+      --arg relay_sni "$RELAY_SNI" \
+      --arg relay_private_key "$RELAY_PRIVATE_KEY" \
+      --arg relay_short_id "$RELAY_SHORT_ID" '
       .outbounds = (
           [.outbounds[] | select(.tag != "landing-out")]
           + [{
@@ -1444,29 +1453,96 @@ if [[ "$KEEP_DIRECT" =~ ^[Yy]$ ]]; then
           }]
       )
       | .inbounds = (
-          [.inbounds[] | select(.tag != "relay-in")]
+          [.inbounds[] | select(.tag != $relay_tag)]
           + [{
               "type": "vless",
-              "tag": "relay-in",
+              "tag": $relay_tag,
               "listen": "::",
               "listen_port": $relay_port,
               "users": [{
-                  "uuid": $relay_uuid
-              }]
+                  "uuid": $relay_uuid,
+                  "flow": "xtls-rprx-vision"
+              }],
+              "tls": {
+                  "enabled": true,
+                  "server_name": $relay_sni,
+                  "reality": {
+                      "enabled": true,
+                      "handshake": {
+                          "server": $relay_sni,
+                          "server_port": 443
+                      },
+                      "private_key": $relay_private_key,
+                      "short_id": [$relay_short_id]
+                  }
+              }
           }]
       )
       | .route = (.route // {"rules":[]})
       | .route.rules = (
-          [.route.rules[]? | select(.inbound != "relay-in")]
+          [.route.rules[]? | select(.inbound != $relay_tag)]
           + [{
-              "inbound": "relay-in",
+              "inbound": $relay_tag,
               "outbound": "landing-out"
           }]
       )
       ' "$CONFIG_PATH" > "${CONFIG_PATH}.tmp" && mv "${CONFIG_PATH}.tmp" "$CONFIG_PATH"
 
-    info "新增线路机入站端口: $RELAY_PORT"
-    info "新增线路机 UUID: $RELAY_UUID"
+    info "新增线路机入站: $RELAY_TAG"
+    info "监听端口: $RELAY_PORT"
+    info "UUID: $RELAY_UUID"
+    info "SNI: $RELAY_SNI"
+
+# 新增线路机入站
+create_relay_inbound() {
+    echo ""
+    info "=== 新增线路机入站 ==="
+    echo "1) Shadowsocks (SS)"
+    echo "2) Hysteria2 (HY2)"
+    echo "3) TUIC"
+    echo "4) VLESS Reality"
+    echo ""
+    read -p "请输入要新增的入站协议编号(默认 4): " RELAY_PROTOCOL
+    RELAY_PROTOCOL="${RELAY_PROTOCOL:-4}"
+
+    echo ""
+    read -p "请输入节点连接 IP 或 DDNS 域名(留空默认自动获取): " RELAY_CUSTOM_IP
+    RELAY_CUSTOM_IP="$(echo "$RELAY_CUSTOM_IP" | tr -d '[:space:]')"
+
+    case "$RELAY_PROTOCOL" in
+        4)
+            RELAY_TYPE="reality"
+            RELAY_TAG="relay-reality-in"
+
+            read -p "请输入 VLESS Reality 端口(留空随机 10000-60000): " USER_RELAY_PORT
+            RELAY_PORT="${USER_RELAY_PORT:-$(rand_port)}"
+
+            RELAY_UUID=$(rand_uuid)
+
+            echo ""
+            read -p "请输入 Reality 的 SNI(留空默认 addons.mozilla.org): " RELAY_SNI
+            RELAY_SNI="$(echo "${RELAY_SNI:-addons.mozilla.org}" | tr -d '[:space:]')"
+
+            info "生成 Reality 密钥对..."
+            RELAY_KEYS=$(sing-box generate reality-keypair 2>&1) || {
+                err "生成 Reality 密钥失败"
+                return 1
+            }
+
+            RELAY_PRIVATE_KEY=$(echo "$RELAY_KEYS" | grep "PrivateKey" | awk '{print $NF}' | tr -d '\r')
+            RELAY_PUBLIC_KEY=$(echo "$RELAY_KEYS" | grep "PublicKey" | awk '{print $NF}' | tr -d '\r')
+            RELAY_SHORT_ID=$(sing-box generate rand 8 --hex 2>/dev/null || echo "0123456789abcdef")
+
+            info "线路机 Reality 入站端口: $RELAY_PORT"
+            info "线路机 Reality UUID: $RELAY_UUID"
+            info "线路机 Reality SNI: $RELAY_SNI"
+            ;;
+        *)
+            err "当前添加出站模式下，暂时建议先使用 VLESS Reality 入站"
+            return 1
+            ;;
+    esac
+}
 
 else
     info "不保留原来的直连节点，所有现有入站将转发到 landing-out"
@@ -1506,11 +1582,28 @@ if sing-box check -c "$CONFIG_PATH" >/dev/null 2>&1; then
 
     if [[ "$KEEP_DIRECT" =~ ^[Yy]$ ]]; then
         info "已保留原有直连节点"
-        info "新增线路机入站 relay-in 将转发到 landing-out"
-    else
+        info "新增线路机入站将转发到 landing-out"
+        echo ""
+
+        if [ -n "${RELAY_CUSTOM_IP:-}" ]; then
+            RELAY_HOST="$RELAY_CUSTOM_IP"
+        else
+            RELAY_HOST=$(get_public_ip)
+        fi
+
+            RELAY_URI="vless://${RELAY_UUID}@${RELAY_HOST}:${RELAY_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${RELAY_SNI}&fp=chrome&pbk=${RELAY_PUBLIC_KEY}&sid=${RELAY_SHORT_ID}#relay-reality"
+
+            echo "=============== 新增线路机 Reality 链接 ==============="
+            echo "$RELAY_URI"
+            echo "======================================================="
+
+            echo "$RELAY_URI" > /etc/sing-box/relay_uri.txt
+            info "线路机链接已保存到: /etc/sing-box/relay_uri.txt"
+        else
         info "未保留原有直连节点"
         info "所有现有入站流量将转发到 landing-out"
     fi
+
 else
     err "配置校验失败，请检查 $CONFIG_PATH"
     return 1
