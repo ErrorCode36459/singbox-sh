@@ -1366,6 +1366,16 @@ action_uninstall() {
 # 新增线路机入站
 create_relay_inbound() {
     echo ""
+    echo "请输入节点名称(留空则默认协议名):"
+    read -r RELAY_NODE_NAME
+
+    if [[ -n "$RELAY_NODE_NAME" ]]; then
+        RELAY_SUFFIX="-${RELAY_NODE_NAME}"
+    else
+        RELAY_SUFFIX=""
+    fi
+
+    echo ""
     info "=== 新增线路机入站 ==="
     echo "1) Shadowsocks (SS)"
     echo "2) Hysteria2 (HY2)"
@@ -1589,7 +1599,7 @@ if sing-box check -c "$CONFIG_PATH" >/dev/null 2>&1; then
             RELAY_HOST=$(get_public_ip)
         fi
 
-            RELAY_URI="vless://${RELAY_UUID}@${RELAY_HOST}:${RELAY_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${RELAY_SNI}&fp=chrome&pbk=${RELAY_PUBLIC_KEY}&sid=${RELAY_SHORT_ID}#relay-reality"
+            RELAY_URI="vless://${RELAY_UUID}@${RELAY_HOST}:${RELAY_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${RELAY_SNI}&fp=chrome&pbk=${RELAY_PUBLIC_KEY}&sid=${RELAY_SHORT_ID}#relay-reality${RELAY_SUFFIX}"
 
             echo "=============== 新增线路机 Reality 链接 ==============="
             echo "$RELAY_URI"
