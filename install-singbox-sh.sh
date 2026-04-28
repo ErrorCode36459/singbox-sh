@@ -1363,6 +1363,57 @@ action_uninstall() {
     info "卸载完成"
 }
 
+# 新增线路机入站
+create_relay_inbound() {
+    echo ""
+    info "=== 新增线路机入站 ==="
+    echo "1) Shadowsocks (SS)"
+    echo "2) Hysteria2 (HY2)"
+    echo "3) TUIC"
+    echo "4) VLESS Reality"
+    echo ""
+    read -p "请输入要新增的入站协议编号(默认 4): " RELAY_PROTOCOL
+    RELAY_PROTOCOL="${RELAY_PROTOCOL:-4}"
+
+    echo ""
+    read -p "请输入节点连接 IP 或 DDNS 域名(留空默认自动获取): " RELAY_CUSTOM_IP
+    RELAY_CUSTOM_IP="$(echo "$RELAY_CUSTOM_IP" | tr -d '[:space:]')"
+
+    case "$RELAY_PROTOCOL" in
+        4)
+            RELAY_TYPE="reality"
+            RELAY_TAG="relay-reality-in"
+
+            read -p "请输入 VLESS Reality 端口(留空随机 10000-60000): " USER_RELAY_PORT
+            RELAY_PORT="${USER_RELAY_PORT:-$(rand_port)}"
+
+            RELAY_UUID=$(rand_uuid)
+
+            echo ""
+            read -p "请输入 Reality 的 SNI(留空默认 addons.mozilla.org): " RELAY_SNI
+            RELAY_SNI="$(echo "${RELAY_SNI:-addons.mozilla.org}" | tr -d '[:space:]')"
+
+            info "生成 Reality 密钥对..."
+            RELAY_KEYS=$(sing-box generate reality-keypair 2>&1) || {
+                err "生成 Reality 密钥失败"
+                return 1
+            }
+
+            RELAY_PRIVATE_KEY=$(echo "$RELAY_KEYS" | grep "PrivateKey" | awk '{print $NF}' | tr -d '\r')
+            RELAY_PUBLIC_KEY=$(echo "$RELAY_KEYS" | grep "PublicKey" | awk '{print $NF}' | tr -d '\r')
+            RELAY_SHORT_ID=$(sing-box generate rand 8 --hex 2>/dev/null || echo "0123456789abcdef")
+
+            info "线路机 Reality 入站端口: $RELAY_PORT"
+            info "线路机 Reality UUID: $RELAY_UUID"
+            info "线路机 Reality SNI: $RELAY_SNI"
+            ;;
+        *)
+            err "当前添加出站模式下，暂时建议先使用 VLESS Reality 入站"
+            return 1
+            ;;
+    esac
+}
+
 # 添加/修改出站
 action_modify_outbound() {
     read_config || return 1
@@ -1420,8 +1471,6 @@ action_modify_outbound() {
     info "落地机地址: $LANDING_SERVER"
     info "落地机端口: $LANDING_PORT"
     info "加密方式: $LANDING_METHOD"
-
-    cp "$CONFIG_PATH" "${CONFIG_PATH}.bak.$(date +%s)"
 
     cp "$CONFIG_PATH" "${CONFIG_PATH}.bak.$(date +%s)"
 
@@ -1492,57 +1541,6 @@ if [[ "$KEEP_DIRECT" =~ ^[Yy]$ ]]; then
     info "监听端口: $RELAY_PORT"
     info "UUID: $RELAY_UUID"
     info "SNI: $RELAY_SNI"
-
-# 新增线路机入站
-create_relay_inbound() {
-    echo ""
-    info "=== 新增线路机入站 ==="
-    echo "1) Shadowsocks (SS)"
-    echo "2) Hysteria2 (HY2)"
-    echo "3) TUIC"
-    echo "4) VLESS Reality"
-    echo ""
-    read -p "请输入要新增的入站协议编号(默认 4): " RELAY_PROTOCOL
-    RELAY_PROTOCOL="${RELAY_PROTOCOL:-4}"
-
-    echo ""
-    read -p "请输入节点连接 IP 或 DDNS 域名(留空默认自动获取): " RELAY_CUSTOM_IP
-    RELAY_CUSTOM_IP="$(echo "$RELAY_CUSTOM_IP" | tr -d '[:space:]')"
-
-    case "$RELAY_PROTOCOL" in
-        4)
-            RELAY_TYPE="reality"
-            RELAY_TAG="relay-reality-in"
-
-            read -p "请输入 VLESS Reality 端口(留空随机 10000-60000): " USER_RELAY_PORT
-            RELAY_PORT="${USER_RELAY_PORT:-$(rand_port)}"
-
-            RELAY_UUID=$(rand_uuid)
-
-            echo ""
-            read -p "请输入 Reality 的 SNI(留空默认 addons.mozilla.org): " RELAY_SNI
-            RELAY_SNI="$(echo "${RELAY_SNI:-addons.mozilla.org}" | tr -d '[:space:]')"
-
-            info "生成 Reality 密钥对..."
-            RELAY_KEYS=$(sing-box generate reality-keypair 2>&1) || {
-                err "生成 Reality 密钥失败"
-                return 1
-            }
-
-            RELAY_PRIVATE_KEY=$(echo "$RELAY_KEYS" | grep "PrivateKey" | awk '{print $NF}' | tr -d '\r')
-            RELAY_PUBLIC_KEY=$(echo "$RELAY_KEYS" | grep "PublicKey" | awk '{print $NF}' | tr -d '\r')
-            RELAY_SHORT_ID=$(sing-box generate rand 8 --hex 2>/dev/null || echo "0123456789abcdef")
-
-            info "线路机 Reality 入站端口: $RELAY_PORT"
-            info "线路机 Reality UUID: $RELAY_UUID"
-            info "线路机 Reality SNI: $RELAY_SNI"
-            ;;
-        *)
-            err "当前添加出站模式下，暂时建议先使用 VLESS Reality 入站"
-            return 1
-            ;;
-    esac
-}
 
 else
     info "不保留原来的直连节点，所有现有入站将转发到 landing-out"
