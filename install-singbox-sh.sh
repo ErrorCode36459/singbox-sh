@@ -1363,6 +1363,22 @@ action_uninstall() {
     info "卸载完成"
 }
 
+# 获取下一个出站编号
+get_next_outbound_index() {
+    local max_index
+    max_index=$(jq -r '
+      [
+        (.outbounds[]?.tag // empty)
+        | select(test("^landing-out-[0-9]+$"))
+        | capture("landing-out-(?<n>[0-9]+)").n
+        | tonumber
+      ]
+      | if length == 0 then 0 else max end
+    ' "$CONFIG_PATH" 2>/dev/null || echo 0)
+
+    echo $((max_index + 1))
+}
+
 # 新增线路机入站
 create_relay_inbound() {
     echo ""
@@ -1392,7 +1408,9 @@ create_relay_inbound() {
     case "$RELAY_PROTOCOL" in
         4)
             RELAY_TYPE="reality"
-            RELAY_TAG="relay-reality-in"
+            RELAY_INDEX="${RELAY_INDEX:-$(get_next_outbound_index)}"
+            RELAY_TAG="relay-reality-in-${RELAY_INDEX}"
+            LANDING_TAG="landing-out-${RELAY_INDEX}"
 
             read -p "请输入 VLESS Reality 端口(留空随机 10000-60000): " USER_RELAY_PORT
             RELAY_PORT="${USER_RELAY_PORT:-$(rand_port)}"
@@ -1429,11 +1447,7 @@ action_modify_outbound() {
     read_config || return 1
 
     echo ""
-    if grep -q '"landing-out"' "$CONFIG_PATH" 2>/dev/null; then
-        info "当前已存在 landing-out 出站，将进行修改"
-    else
-        info "当前未检测到 landing-out 出站，将进行添加"
-    fi
+    info "将新增一个独立的入站、出站和路由"
 
     echo ""
         read -p "是否保留原来的直连节点？(Y/n): " KEEP_DIRECT
@@ -1490,28 +1504,29 @@ if [[ "$KEEP_DIRECT" =~ ^[Yy]$ ]]; then
     create_relay_inbound || return 1
 
     jq \
-      --arg server "$LANDING_SERVER" \
-      --argjson port "$LANDING_PORT" \
-      --arg method "$LANDING_METHOD" \
-      --arg password "$LANDING_PASSWORD" \
-      --arg relay_tag "$RELAY_TAG" \
-      --argjson relay_port "$RELAY_PORT" \
-      --arg relay_uuid "$RELAY_UUID" \
-      --arg relay_sni "$RELAY_SNI" \
-      --arg relay_private_key "$RELAY_PRIVATE_KEY" \
-      --arg relay_short_id "$RELAY_SHORT_ID" '
-      .outbounds = (
-          [.outbounds[] | select(.tag != "landing-out")]
+        --arg server "$LANDING_SERVER" \
+        --argjson port "$LANDING_PORT" \
+        --arg method "$LANDING_METHOD" \
+        --arg password "$LANDING_PASSWORD" \
+        --arg relay_tag "$RELAY_TAG" \
+        --arg landing_tag "$LANDING_TAG" \
+        --argjson relay_port "$RELAY_PORT" \
+        --arg relay_uuid "$RELAY_UUID" \
+        --arg relay_sni "$RELAY_SNI" \
+        --arg relay_private_key "$RELAY_PRIVATE_KEY" \
+        --arg relay_short_id "$RELAY_SHORT_ID" '
+        .outbounds = (
+          [.outbounds[] | select(.tag != $landing_tag)]
           + [{
               "type": "shadowsocks",
-              "tag": "landing-out",
+              "tag": $landing_tag,
               "server": $server,
               "server_port": $port,
               "method": $method,
               "password": $password
           }]
-      )
-      | .inbounds = (
+        )
+        | .inbounds = (
           [.inbounds[] | select(.tag != $relay_tag)]
           + [{
               "type": "vless",
@@ -1536,24 +1551,25 @@ if [[ "$KEEP_DIRECT" =~ ^[Yy]$ ]]; then
                   }
               }
           }]
-      )
-      | .route = (.route // {"rules":[]})
-      | .route.rules = (
+        )
+        | .route = (.route // {"rules":[]})
+        | .route.rules = (
           [.route.rules[]? | select(.inbound != $relay_tag)]
           + [{
               "inbound": $relay_tag,
-              "outbound": "landing-out"
+              "outbound": $landing_tag
           }]
-      )
-      ' "$CONFIG_PATH" > "${CONFIG_PATH}.tmp" && mv "${CONFIG_PATH}.tmp" "$CONFIG_PATH"
+        )
+        ' "$CONFIG_PATH" > "${CONFIG_PATH}.tmp" && mv "${CONFIG_PATH}.tmp" "$CONFIG_PATH"
 
-    info "新增线路机入站: $RELAY_TAG"
-    info "监听端口: $RELAY_PORT"
-    info "UUID: $RELAY_UUID"
-    info "SNI: $RELAY_SNI"
+        info "新增线路机入站: $RELAY_TAG"
+        info "新增落地机出站: $LANDING_TAG"
+        info "监听端口: $RELAY_PORT"
+        info "UUID: $RELAY_UUID"
+        info "SNI: $RELAY_SNI"
 
-else
-    info "不保留原来的直连节点，所有现有入站将转发到 landing-out"
+    else
+        info "不保留原来的直连节点，所有现有入站将转发到 landing-out"
 
     jq \
       --arg server "$LANDING_SERVER" \
@@ -1566,7 +1582,7 @@ else
           [.outbounds[] | select(.tag != "landing-out")]
           + [{
               "type": "shadowsocks",
-              "tag": "landing-out",
+              "tag": $landing_tag,
               "server": $server,
               "server_port": $port,
               "method": $method,
@@ -1599,13 +1615,13 @@ if sing-box check -c "$CONFIG_PATH" >/dev/null 2>&1; then
             RELAY_HOST=$(get_public_ip)
         fi
 
-            RELAY_URI="vless://${RELAY_UUID}@${RELAY_HOST}:${RELAY_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${RELAY_SNI}&fp=chrome&pbk=${RELAY_PUBLIC_KEY}&sid=${RELAY_SHORT_ID}#relay-reality${RELAY_SUFFIX}"
+            RELAY_URI="vless://${RELAY_UUID}@${RELAY_HOST}:${RELAY_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${RELAY_SNI}&fp=chrome&pbk=${RELAY_PUBLIC_KEY}&sid=${RELAY_SHORT_ID}#relay-reality-${RELAY_INDEX}${RELAY_SUFFIX}"
 
             echo "=============== 新增线路机 Reality 链接 ==============="
             echo "$RELAY_URI"
             echo "======================================================="
 
-            echo "$RELAY_URI" > /etc/sing-box/relay_uri.txt
+            echo "$RELAY_URI" >> /etc/sing-box/relay_uri.txt
             info "线路机链接已保存到: /etc/sing-box/relay_uri.txt"
         else
         info "未保留原有直连节点"
@@ -1998,13 +2014,8 @@ MENU
     echo "$option) 路由管理"
     option=$((option + 1))
 
-    if grep -q '"landing-out"' "$CONFIG_PATH" 2>/dev/null; then
-        MENU_MAP[$option]="modify_outbound"
-        echo "$option) 修改出站"
-    else
-        MENU_MAP[$option]="modify_outbound"
-        echo "$option) 添加出站"
-    fi
+    MENU_MAP[$option]="modify_outbound"
+    echo "$option) 添加出站"
     option=$((option + 1))
     
     MENU_MAP[$option]="relay"
