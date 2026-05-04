@@ -1186,8 +1186,24 @@ action_view_uri() {
 
     if [ -f /etc/sing-box/relay_uri.txt ]; then
         echo ""
-        echo "=== 新增线路机 Reality ==="
-        cat /etc/sing-box/relay_uri.txt
+        echo "=== 线路机 Reality ==="
+
+        local idx=1
+        while IFS= read -r uri; do
+            [ -z "$uri" ] && continue
+
+            local name
+            name="${uri##*#}"
+
+            if [ -z "$name" ] || [ "$name" = "$uri" ]; then
+                name="relay-reality-${idx}"
+            fi
+
+            echo "【${name}】"
+            echo "$uri"
+            echo ""
+            idx=$((idx + 1))
+        done < /etc/sing-box/relay_uri.txt
     fi
 }
 
@@ -1408,9 +1424,9 @@ create_relay_inbound() {
     case "$RELAY_PROTOCOL" in
         4)
             RELAY_TYPE="reality"
-            RELAY_INDEX="${RELAY_INDEX:-$(get_next_outbound_index)}"
+            RELAY_INDEX="$(get_next_outbound_index)"
             RELAY_TAG="relay-reality-in-${RELAY_INDEX}"
-            LANDING_TAG="landing-out-${RELAY_INDEX}"
+            LANDING_TAG="landing-out-${RELAY_INDEX}""
 
             read -p "请输入 VLESS Reality 端口(留空随机 10000-60000): " USER_RELAY_PORT
             RELAY_PORT="${USER_RELAY_PORT:-$(rand_port)}"
