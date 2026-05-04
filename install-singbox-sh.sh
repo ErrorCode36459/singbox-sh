@@ -1618,6 +1618,84 @@ else
 fi
 }
 
+# 删除出站
+action_delete_outbound() {
+    read_config || return 1
+
+    if ! grep -q '"landing-out"' "$CONFIG_PATH" 2>/dev/null; then
+        warn "当前未检测到 landing-out 出站，无需删除"
+        return 0
+    fi
+
+    echo ""
+    warn "此操作将删除 landing-out 出站，并删除对应的 relay-reality-in 入站和相关路由"
+    read -p "确认删除出站？(y/N): " confirm
+
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        info "已取消删除"
+        return 0
+    fi
+
+    cp "$CONFIG_PATH" "${CONFIG_PATH}.bak.$(date +%s)"
+
+    jq '
+      .outbounds = [.outbounds[] | select(.tag != "landing-out")]
+      | .inbounds = [.inbounds[] | select(.tag != "relay-reality-in")]
+      | if .route and .route.rules then
+          .route.rules = [
+            .route.rules[]?
+            | select(
+                (.outbound? != "landing-out")
+                and (.inbound? != "relay-reality-in")
+              )
+          ]
+        else
+          .
+        end
+    ' "$CONFIG_PATH" > "${CONFIG_PATH}.tmp" && mv "${CONFIG_PATH}.tmp" "$CONFIG_PATH"
+
+    rm -f /etc/sing-box/relay_uri.txt
+
+    if sing-box check -c "$CONFIG_PATH" >/dev/null 2>&1; then
+        info "配置校验通过，正在重启服务"
+        service_restart || warn "重启服务失败"
+        info "已删除 landing-out 出站及对应线路机入站"
+    else
+        err "配置校验失败，请检查 $CONFIG_PATH"
+        return 1
+    fi
+}
+
+# 路由管理
+action_route_manage() {
+    while true; do
+        echo ""
+        echo "=========================="
+        echo " 路由管理"
+        echo "=========================="
+        echo "1) 修改出站"
+        echo "2) 删除出站"
+        echo "0) 返回上一级"
+        echo "=========================="
+        read -p "请输入选项: " route_opt
+
+        case "$route_opt" in
+            1)
+                action_modify_outbound
+                ;;
+            2)
+                action_delete_outbound
+                ;;
+            0)
+                return 0
+                ;;
+            *)
+                warn "无效选项: $route_opt"
+                ;;
+        esac
+    done
+}
+
 # 生成线路机脚本
 action_generate_relay() {
     read_config || return 1
@@ -1913,12 +1991,16 @@ MENU
     option=$((option + 1))
     
     MENU_MAP[$option]="update"
-    echo "$((option))) 更新 sing-box"
+    echo "$option) 更新 sing-box"
+    option=$((option + 1))
+
+    MENU_MAP[$option]="route_manage"
+    echo "$option) 路由管理"
     option=$((option + 1))
 
     if grep -q '"landing-out"' "$CONFIG_PATH" 2>/dev/null; then
-    MENU_MAP[$option]="modify_outbound"
-    echo "$option) 修改出站"
+        MENU_MAP[$option]="modify_outbound"
+        echo "$option) 修改出站"
     else
         MENU_MAP[$option]="modify_outbound"
         echo "$option) 添加出站"
@@ -1966,6 +2048,7 @@ while true; do
                 restart) service_restart && info "已重启" ;;
                 status) service_status ;;
                 update) action_update ;;
+                route_manage) action_route_manage ;;
                 modify_outbound) action_modify_outbound ;;
                 relay) action_generate_relay ;;
                 uninstall) action_uninstall; exit 0 ;;
