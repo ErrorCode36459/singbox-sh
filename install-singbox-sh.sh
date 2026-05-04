@@ -1426,7 +1426,7 @@ create_relay_inbound() {
             RELAY_TYPE="reality"
             RELAY_INDEX="$(get_next_outbound_index)"
             RELAY_TAG="relay-reality-in-${RELAY_INDEX}"
-            LANDING_TAG="landing-out-${RELAY_INDEX}""
+            LANDING_TAG="landing-out-${RELAY_INDEX}"
 
             read -p "请输入 VLESS Reality 端口(留空随机 10000-60000): " USER_RELAY_PORT
             RELAY_PORT="${USER_RELAY_PORT:-$(rand_port)}"
@@ -1598,7 +1598,7 @@ if [[ "$KEEP_DIRECT" =~ ^[Yy]$ ]]; then
           [.outbounds[] | select(.tag != "landing-out")]
           + [{
               "type": "shadowsocks",
-              "tag": $landing_tag,
+              "tag": "landing-out",
               "server": $server,
               "server_port": $port,
               "method": $method,
