@@ -1654,13 +1654,82 @@ fi
 action_delete_outbound() {
     read_config || return 1
 
-    if ! grep -q '"landing-out"' "$CONFIG_PATH" 2>/dev/null; then
-        warn "当前未检测到 landing-out 出站，无需删除"
+    local outbound_rows=()
+    mapfile -t outbound_rows < <(
+        jq -r '
+          . as $root
+          | .outbounds[]? as $out
+          | select(($out.tag // "") != "")
+          | select(($out.tag | test("^(direct|block|dns)-out$")) | not)
+          | (
+              [
+                $root.route.rules[]?
+                | select(.outbound? == $out.tag)
+                | .inbound?
+                | if type == "array" then .[] else . end
+              ]
+              | unique
+              | map(
+                  . as $in_tag
+                  | ([$root.inbounds[]? | select(.tag == $in_tag) | "\($in_tag)(\(.type))"]
+                     | if length > 0 then .[0] else $in_tag end)
+                )
+              | join(",")
+            ) as $linked_inbounds
+          | [
+              ($out.tag // "-"),
+              ($out.type // "-"),
+              ($out.server // "-"),
+              (($out.server_port // "-") | tostring),
+              (if $linked_inbounds == "" then "-" else $linked_inbounds end)
+            ]
+          | @tsv
+        ' "$CONFIG_PATH" 2>/dev/null
+    )
+
+    if [ "${#outbound_rows[@]}" -eq 0 ]; then
+        warn "当前未检测到可删除的出站"
         return 0
     fi
 
     echo ""
-    warn "此操作将删除 landing-out 出站，并删除对应的 relay-reality-in 入站和相关路由"
+    info "当前可删除的出站:"
+
+    local i tag type server port linked_inbounds
+    for i in "${!outbound_rows[@]}"; do
+        IFS=$'\t' read -r tag type server port linked_inbounds <<< "${outbound_rows[$i]}"
+        printf "%d) %s [%s] %s:%s -> %s\n" "$((i + 1))" "$tag" "$type" "$server" "$port" "$linked_inbounds"
+    done
+    echo "0) 取消"
+    echo ""
+
+    local choice
+    read -p "请选择要删除的出站编号: " choice
+
+    if [ "$choice" = "0" ]; then
+        info "已取消删除"
+        return 0
+    fi
+
+    if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "${#outbound_rows[@]}" ]; then
+        warn "无效选项: $choice"
+        return 1
+    fi
+
+    IFS=$'\t' read -r tag type server port linked_inbounds <<< "${outbound_rows[$((choice - 1))]}"
+
+    local relay_tag=""
+    if [[ "$tag" =~ ^landing-out-([0-9]+)$ ]]; then
+        relay_tag="relay-reality-in-${BASH_REMATCH[1]}"
+    elif [ "$tag" = "landing-out" ]; then
+        relay_tag="relay-reality-in"
+    fi
+
+    echo ""
+    warn "此操作将删除出站 $tag，并删除引用它的路由"
+    if [ -n "$relay_tag" ] && jq -e --arg relay_tag "$relay_tag" '.inbounds[]? | select(.tag == $relay_tag)' "$CONFIG_PATH" >/dev/null 2>&1; then
+        warn "同时会删除对应入站 $relay_tag"
+    fi
     read -p "确认删除出站？(y/N): " confirm
 
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
@@ -1670,28 +1739,48 @@ action_delete_outbound() {
 
     cp "$CONFIG_PATH" "${CONFIG_PATH}.bak.$(date +%s)"
 
-    jq '
-      .outbounds = [.outbounds[] | select(.tag != "landing-out")]
-      | .inbounds = [.inbounds[] | select(.tag != "relay-reality-in")]
+    jq --arg delete_out "$tag" --arg delete_in "$relay_tag" '
+      def inbound_matches($delete_in):
+        if $delete_in == "" then false
+        elif (.inbound? | type) == "array" then (.inbound | index($delete_in)) != null
+        else .inbound? == $delete_in
+        end;
+
+      .outbounds = [.outbounds[]? | select(.tag != $delete_out)]
+      | if $delete_in != "" then
+          .inbounds = [.inbounds[]? | select(.tag != $delete_in)]
+        else
+          .
+        end
       | if .route and .route.rules then
           .route.rules = [
             .route.rules[]?
             | select(
-                (.outbound? != "landing-out")
-                and (.inbound? != "relay-reality-in")
+                (.outbound? != $delete_out)
+                and (inbound_matches($delete_in) | not)
               )
           ]
         else
           .
         end
+      | if .route and .route.final == $delete_out then
+          if ([.outbounds[]? | select(.tag == "direct-out")] | length) > 0 then
+            .route.final = "direct-out"
+          else
+            del(.route.final)
+          end
+        else
+          .
+        end
     ' "$CONFIG_PATH" > "${CONFIG_PATH}.tmp" && mv "${CONFIG_PATH}.tmp" "$CONFIG_PATH"
-
-    rm -f /etc/sing-box/relay_uri.txt
 
     if sing-box check -c "$CONFIG_PATH" >/dev/null 2>&1; then
         info "配置校验通过，正在重启服务"
         service_restart || warn "重启服务失败"
-        info "已删除 landing-out 出站及对应线路机入站"
+        if [[ "$tag" =~ ^landing-out-([0-9]+)$ ]] && [ -f /etc/sing-box/relay_uri.txt ]; then
+            sed -i.bak "/relay-reality-${BASH_REMATCH[1]}/d" /etc/sing-box/relay_uri.txt
+        fi
+        info "已删除出站: $tag"
     else
         err "配置校验失败，请检查 $CONFIG_PATH"
         return 1
