@@ -1660,7 +1660,16 @@ action_delete_outbound() {
           . as $root
           | .outbounds[]? as $out
           | select(($out.tag // "") != "")
-          | select(($out.tag | test("^(direct|block|dns)-out$")) | not)
+          | select(($out.tag | test("^(block|dns)-out$")) | not)
+          | (
+              if $out.type == "direct" then "直连出站"
+              elif $out.type == "shadowsocks" then "Shadowsocks 出站"
+              elif $out.type == "hysteria2" then "Hysteria2 出站"
+              elif $out.type == "tuic" then "TUIC 出站"
+              elif $out.type == "vless" then "VLESS Reality 出站"
+              else (($out.type // "-") + " 出站")
+              end
+            ) as $outbound_name
           | (
               [
                 $root.route.rules[]?
@@ -1671,7 +1680,7 @@ action_delete_outbound() {
               | unique
               | map(
                   . as $in_tag
-                  | ([$root.inbounds[]? | select(.tag == $in_tag) | "\($in_tag)(\(.type))"]
+                  | ([$root.inbounds[]? | select(.tag == $in_tag) | (($in_tag | tostring) + "(" + (.type // "-") + ")")]
                      | if length > 0 then .[0] else $in_tag end)
                 )
               | join(",")
@@ -1679,6 +1688,7 @@ action_delete_outbound() {
           | [
               ($out.tag // "-"),
               ($out.type // "-"),
+              $outbound_name,
               ($out.server // "-"),
               (($out.server_port // "-") | tostring),
               (if $linked_inbounds == "" then "-" else $linked_inbounds end)
@@ -1695,10 +1705,14 @@ action_delete_outbound() {
     echo ""
     info "当前可删除的出站:"
 
-    local i tag type server port linked_inbounds
+    local i tag type outbound_name server port linked_inbounds
     for i in "${!outbound_rows[@]}"; do
-        IFS=$'\t' read -r tag type server port linked_inbounds <<< "${outbound_rows[$i]}"
-        printf "%d) %s [%s] %s:%s -> %s\n" "$((i + 1))" "$tag" "$type" "$server" "$port" "$linked_inbounds"
+        IFS=$'\t' read -r tag type outbound_name server port linked_inbounds <<< "${outbound_rows[$i]}"
+        if [ "$type" = "direct" ]; then
+            printf "%d) %s [%s] | 使用入站: %s\n" "$((i + 1))" "$tag" "$outbound_name" "$linked_inbounds"
+        else
+            printf "%d) %s [%s] 服务端: %s:%s | 使用入站: %s\n" "$((i + 1))" "$tag" "$outbound_name" "$server" "$port" "$linked_inbounds"
+        fi
     done
     echo "0) 取消"
     echo ""
@@ -1716,7 +1730,7 @@ action_delete_outbound() {
         return 1
     fi
 
-    IFS=$'\t' read -r tag type server port linked_inbounds <<< "${outbound_rows[$((choice - 1))]}"
+    IFS=$'\t' read -r tag type outbound_name server port linked_inbounds <<< "${outbound_rows[$((choice - 1))]}"
 
     local relay_tag=""
     if [[ "$tag" =~ ^landing-out-([0-9]+)$ ]]; then
@@ -1794,7 +1808,7 @@ action_route_manage() {
         echo "=========================="
         echo " 路由管理"
         echo "=========================="
-        echo "1) 修改出站"
+        echo "1) 添加出站"
         echo "2) 删除出站"
         echo "0) 返回上一级"
         echo "=========================="
@@ -2119,10 +2133,6 @@ MENU
     echo "$option) 路由管理"
     option=$((option + 1))
 
-    MENU_MAP[$option]="modify_outbound"
-    echo "$option) 添加出站"
-    option=$((option + 1))
-    
     MENU_MAP[$option]="relay"
     echo "$((option))) 生成线路机脚本(出口为本机ss协议)"
     option=$((option + 1))
