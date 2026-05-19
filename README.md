@@ -12,7 +12,7 @@
 安装全功能 sing-box：
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/chaooooooo/singbox-sh/main/install-singbox-sh.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/ErrorCode36459/singbox-sh/main/install-singbox-sh.sh)"
 ```
 
 ## 主要特性
