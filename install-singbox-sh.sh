@@ -1680,10 +1680,19 @@ action_delete_outbound() {
               | unique
               | map(
                   . as $in_tag
-                  | ([$root.inbounds[]? | select(.tag == $in_tag) | (($in_tag | tostring) + "(" + (.type // "-") + ")")]
+                  | ([$root.inbounds[]?
+                      | select(.tag == $in_tag)
+                      | (
+                          if .type == "shadowsocks" then "[ss入站]: "
+                          elif .type == "hysteria2" then "[hy2入站]: "
+                          elif .type == "tuic" then "[tuic入站]: "
+                          elif .type == "vless" then "[vless入站]: "
+                          else "[" + (.type // "-") + "入站]: "
+                          end
+                        ) + ($in_tag | tostring)]
                      | if length > 0 then .[0] else $in_tag end)
                 )
-              | join(",")
+              | join(" / ")
             ) as $linked_inbounds
           | [
               ($out.tag // "-"),
@@ -1708,10 +1717,11 @@ action_delete_outbound() {
     local i tag type outbound_name server port linked_inbounds
     for i in "${!outbound_rows[@]}"; do
         IFS=$'\t' read -r tag type outbound_name server port linked_inbounds <<< "${outbound_rows[$i]}"
+        [ "$linked_inbounds" = "-" ] && linked_inbounds="[未绑定入站]: -"
         if [ "$type" = "direct" ]; then
-            printf "%d) %s [%s] | 使用入站: %s\n" "$((i + 1))" "$tag" "$outbound_name" "$linked_inbounds"
+            printf "%d) %s >> [%s]: %s\n" "$((i + 1))" "$linked_inbounds" "$outbound_name" "$tag"
         else
-            printf "%d) %s [%s] 服务端: %s:%s | 使用入站: %s\n" "$((i + 1))" "$tag" "$outbound_name" "$server" "$port" "$linked_inbounds"
+            printf "%d) %s >> [%s]: %s %s:%s\n" "$((i + 1))" "$linked_inbounds" "$outbound_name" "$tag" "$server" "$port"
         fi
     done
     echo "0) 取消"
